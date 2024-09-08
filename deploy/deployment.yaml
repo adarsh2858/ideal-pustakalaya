@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{.repoName}}
+  labels:
+    app: {{.repoName}}
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{.repoName}}
+  template:
+    metadata:
+      labels:
+        app: {{.repoName}}
+    spec:
+      volumes:
+        - name: app-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: "{{.repoName}}"
+      containers:
+        - name: {{.repoName}}
+          image: gcr.io/loupe-dev/{{.repoName}}:latest
+          ports:
+            - name: grpc-server
+              containerPort: 50051
+          envFrom:
+            - configMapRef:
+                name: {{.repoName}}
+          env:
+            - name: PORT
+              value: "80"
+            - name: REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: region
+                  key: region
+            - name: BQ_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: bigquery-client
+                  key: bq.region
+            - name: BQ_TIER_REALTIME
+              valueFrom:
+                configMapKeyRef:
+                  name: bigquery-client
+                  key: bq.tier.realtime
+            - name: BQ_TIER_FRONTLINE
+              valueFrom:
+                configMapKeyRef:
+                  name: bigquery-client
+                  key: bq.tier.frontline
+            - name: BQ_TIER_CORE
+              valueFrom:
+                configMapKeyRef:
+                  name: bigquery-client
+                  key: bq.tier.core
+            - name: BQ_TIER_ETL
+              valueFrom:
+                configMapKeyRef:
+                  name: bigquery-client
+                  key: bq.tier.etl
+            - name: BQ_TIER_BACKGROUND
+              valueFrom:
+                configMapKeyRef:
+                  name: bigquery-client
+                  key: bq.tier.background
+          volumeMounts:
+            - name: app-secrets
+              mountPath: "/var/app-secrets"
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "10m"
+            limits:
+              memory: "256Mi"
+              cpu: "100m"
