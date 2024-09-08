@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{.repoName}}
+  namespace: default
+  labels:
+    app.kubernetes.io/name: {{.repoName}}
+    app.kubernetes.io/instance: {{.repoName}}
+data:
+  PROJECT_ID: loupe-dev
+  SERVER_NAME: {{.repoName}}
+  LOG_LEVEL: debug
+
+  # Grpc server configurations
+  GRPC_HOST: ''
+  GRPC_PORT: '50051'
+
+  # PubSub configuration
+
+  # Client configurations
+
+  # DB configurations

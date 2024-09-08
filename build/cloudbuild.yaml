@@ -1,0 +1,101 @@
+steps:
+- name: 'gcr.io/cloud-builders/git'
+  secretEnv: ['SSH_KEY']
+  entrypoint: 'bash'
+  args:
+  - -c
+  - |
+    echo "$$SSH_KEY" > /root/.ssh/id_rsa
+    chmod 0600 /root/.ssh/id_rsa
+    ssh-keyscan -t rsa github.com > /root/.ssh/known_hosts
+    git config --global --add url."git@github.com:".insteadOf "https://github.com/"
+  volumes:
+  - name: 'ssh'
+    path: /root/.ssh
+
+- name: "golang:1.19"
+  id: 'Build'
+  entrypoint: "bash"
+  args:
+    - "-c"
+    - |
+      GOOS=linux CGO_ENABLED=0 go mod tidy && GOOS=linux CGO_ENABLED=0 go build -a -installsuffix cgo -o /go/bin/{{.repoName}} ./cmd/server
+  volumes:
+  - name: 'ssh'
+    path: /root/.ssh
+
+- name: "golang:1.19"
+  id: 'Static Check'
+  entrypoint: "bash"
+  args:
+    - "-c"
+    - |
+      go install honnef.co/go/tools/cmd/staticcheck@latest
+      staticcheck ./...
+
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Docker Build'
+  args: ['build', '-f', 'build/Dockerfile', '--tag=gcr.io/loupe-dev/{{.repoName}}', '/go']
+
+- id: "Static Filesystem Analysis"
+  name: "aquasec/trivy:latest"
+  args: ["fs", "--severity", "${_SEVERITY}", "--exit-code", "1", "/workspace"]
+
+- id: "Static Config Analysis"
+  name: "aquasec/trivy:latest"
+  args: ["config", "--severity", "${_SEVERITY}", "--exit-code", "1","/workspace"]
+
+- id: "Docker Image scanning"
+  name: "aquasec/trivy:latest"
+  entrypoint: /bin/sh
+  args:
+    - '-c'
+    - |
+      trivy image --exit-code 1 --no-progress --severity ${_SEVERITY} ${_IMAGE_NAME}:${_IMAGE_VERSION}
+
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Push'
+  args: ["push", "gcr.io/loupe-dev/{{.repoName}}"]
+
+- name: 'gcr.io/cloud-builders/gke-deploy:stable'
+  id: 'Deploy'
+  args:
+  - 'run'
+  - '--filename=$_K8S_YAML_PATH'
+  - '--image=$_IMAGE_NAME:$_IMAGE_VERSION'
+  - '--app=$_K8S_APP_NAME'
+  - '--version=$_IMAGE_VERSION'
+  - '--namespace=$_K8S_NAMESPACE'
+  - '--label=gcb-build-id=$BUILD_ID'
+  - '--cluster=$_GKE_CLUSTER'
+  - '--location=$_GKE_LOCATION'
+
+images:
+- '$_IMAGE_NAME:$_IMAGE_VERSION'
+artifacts:
+  objects:
+    location: 'gs://$_OUTPUT_BUCKET/$BUILD_ID/expanded'
+    paths: ['output/expanded/*']
+substitutions:
+  _IMAGE_NAME: 'gcr.io/loupe-dev/{{.repoName}}'
+  _IMAGE_VERSION: 'latest'
+  _GKE_CLUSTER: 'dev-cluster'
+  _GKE_LOCATION: 'us-east4-c'
+  _K8S_YAML_PATH: './deploy'
+  _K8S_APP_NAME: '{{.repoName}}'
+  _K8S_NAMESPACE: 'default'
+  _OUTPUT_BUCKET: 'loupe-dev_cloudbuild'
+  _SEVERITY: 'CRITICAL'
+options:
+  substitution_option: 'ALLOW_LOOSE'
+  env:
+  - GO111MODULE=on
+  volumes:
+  - name: go-modules
+    path: /go
+tags: ['gcp-cloud-build-deploy', '$_K8S_APP_NAME']
+
+availableSecrets:
+  secretManager:
+  - versionName: projects/loupe-dev/secrets/github_cloudbuild_ssh_key/versions/latest
+    env: 'SSH_KEY'

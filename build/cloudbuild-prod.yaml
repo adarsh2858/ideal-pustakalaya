@@ -1,0 +1,47 @@
+steps:
+- name: 'gcr.io/cloud-builders/git'
+  secretEnv: ['SSH_KEY']
+  entrypoint: 'bash'
+  args:
+  - -c
+  - |
+    echo "$$SSH_KEY" > /root/.ssh/id_rsa
+    chmod 0600 /root/.ssh/id_rsa
+    ssh-keyscan -t rsa github.com > /root/.ssh/known_hosts
+    git config --global --add url."git@github.com:".insteadOf "https://github.com/"
+  volumes:
+  - name: 'ssh'
+    path: /root/.ssh
+
+- name: "golang:1.19"
+  id: 'Build'
+  entrypoint: "bash"
+  args:
+    - "-c"
+    - |
+      GOOS=linux CGO_ENABLED=0 go mod tidy && GOOS=linux CGO_ENABLED=0 go build -a -installsuffix cgo -o /go/bin/{{.repoName}} ./cmd/server
+  volumes:
+  - name: 'ssh'
+    path: /root/.ssh
+
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Docker Build'
+  args: ['build', '-f', 'build/Dockerfile', '--tag=gcr.io/loupe-prod/{{.repoName}}:$TAG_NAME', '/go']
+
+images:
+- '$_IMAGE_NAME:$TAG_NAME'
+substitutions:
+  _IMAGE_NAME: 'gcr.io/loupe-prod/{{.repoName}}'
+options:
+  substitution_option: 'ALLOW_LOOSE'
+  env:
+  - GO111MODULE=on
+  volumes:
+  - name: go-modules
+    path: /go
+tags: ['gcp-cloud-build-deploy', '$_K8S_APP_NAME']
+
+availableSecrets:
+  secretManager:
+  - versionName: projects/loupe-prod/secrets/github_cloudbuild_ssh_key/versions/latest
+    env: 'SSH_KEY'
